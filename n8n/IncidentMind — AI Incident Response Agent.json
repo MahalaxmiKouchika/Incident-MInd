@@ -1,0 +1,374 @@
+{
+  "name": "IncidentMind — AI Incident Response Agent",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "incidentmind-chat",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "e616fef2-1636-46cf-bff0-c2cefc298bbd",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        224,
+        112
+      ],
+      "webhookId": "044876cf-95dc-4f4f-bc7b-09aa90e0c6d2"
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "=memory_enabled={{ $('Webhook').item.json.body.memory_enabled ?? true }}\n\nUser question: {{ $('Webhook').item.json.body.message }}",
+        "options": {
+          "systemMessage": "You are IncidentMind, an AI incident-response assistant.\n\nCORE BEHAVIOR: UNDERSTAND the user's actual question -> DECIDE which tools (if any) are needed -> USE tools only when needed -> REASON -> ANSWER.\n\nRULES:\n1. Answer general questions (e.g. \"What is React?\", \"Explain JWT\", \"What is Docker?\", \"Why am I getting a 401 error?\") directly from your own knowledge. Do NOT call any tool for these.\n2. Use the search_hindsight_memory tool ONLY when the question depends on historical organizational knowledge (previous incidents, past resolutions, \"have we seen this before\", lessons learned).\n3. Use the reflect_hindsight tool when the question requires synthesis across multiple historical memories (e.g. \"what lessons should we apply based on previous incidents?\").\n4. Use the incident_api tool for CURRENT operational data (current incident status, logs, deployments, service health, runbooks, postmortems).\n5. Current evidence takes precedence over historical memory when they conflict. Memory is evidence, not proof.\n6. NEVER invent information. NEVER hardcode or default to any specific incident (such as INC-021) or service (such as payment-api) in answers to unrelated questions. The user's question always determines the response.\n7. If search_hindsight_memory returns no relevant memories, say \"No relevant historical memory was found.\" Do not fabricate historical information.\n8. If a tool fails or returns an error, tell the user the tool failed and continue with what you know. Do not fabricate the tool's result.\n9. memory_enabled flag: when the user message starts with \"memory_enabled=false\", do NOT call search_hindsight_memory, reflect_hindsight, or retain_hindsight_memory — answer without historical memory. When \"memory_enabled=true\" you may use them.\n10. Use retain_hindsight_memory after generating genuinely useful new incident-response knowledge (root causes, resolutions, postmortem findings, lessons). Include provenance metadata (incident_id, service, environment, timestamp, source, root_cause, resolution, outcome). Do NOT retain trivial chat.\n11. Short-term conversation history (provided by the chat memory) resolves follow-ups like \"it\" or \"that incident\" — it is separate from Hindsight long-term memory.\n12. Questions about the IncidentMind application itself (backend, Hindsight integration, chatbot architecture) should be answered using incident_api project information when available, otherwise from your knowledge of this architecture.\n\nRESPONSE FORMAT — always end your final answer as a single JSON object (no markdown fences around it, no chain-of-thought):\n{\"answer\": \"<natural language answer>\", \"memory_used\": <true if any hindsight tool was called this turn, else false>, \"memories\": [<short summaries of memories actually used>], \"sources\": [<provenance ids/services from tools actually used>], \"tools_used\": [<names of tools actually called>], \"conversation_id\": \"<leave empty, filled by the system>\"}",
+          "maxIterations": 12
+        }
+      },
+      "id": "1e915fe3-f889-422f-bea0-7adb87296739",
+      "name": "IncidentMind Agent",
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 3.1,
+      "position": [
+        480,
+        112
+      ],
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "model": "openai/gpt-oss-120b",
+        "options": {
+          "maxTokensToSample": 4096,
+          "temperature": 0.4
+        }
+      },
+      "id": "8a462df2-ec02-4be5-9d0c-6e9737d25d17",
+      "name": "Groq Chat Model",
+      "type": "@n8n/n8n-nodes-langchain.lmChatGroq",
+      "typeVersion": 1,
+      "position": [
+        224,
+        336
+      ],
+      "credentials": {
+        "groqApi": {
+          "id": "4JjjBXe8AZDhmzpk",
+          "name": "Groq account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "sessionIdType": "customKey",
+        "sessionKey": "={{ $(\"Webhook\").item.json.body.conversation_id ?? \"default-conversation\" }}",
+        "contextWindowLength": 20
+      },
+      "id": "474190d4-c12a-4020-817b-be77e9ccc244",
+      "name": "Conversation Memory",
+      "type": "@n8n/n8n-nodes-langchain.memoryBufferWindow",
+      "typeVersion": 1.4,
+      "position": [
+        352,
+        336
+      ]
+    },
+    {
+      "parameters": {
+        "toolDescription": "Search Hindsight long-term organizational memory for relevant historical knowledge: previous incidents, resolutions, root causes, postmortems, lessons learned. Use ONLY when the question depends on historical organizational knowledge. Input: {\"query\": \"<memory query>\", \"budget\": \"mid\"}. Returns matching memories with provenance. Do not use for general knowledge questions.",
+        "method": "POST",
+        "url": "https://api.hindsight.vectorize.io/v1/default/banks/incidentmind/memories/recall",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpTemplatedCustomAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"query\": {{ $json.query ?? $fromAI('query', 'The question or topic to search organizational memory for') }},\n  \"budget\": \"mid\"\n}",
+        "options": {}
+      },
+      "id": "94ff8da3-e398-48a9-9a63-21cec5474616",
+      "name": "search_hindsight_memory",
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.5,
+      "position": [
+        480,
+        336
+      ],
+      "credentials": {
+        "httpTemplatedCustomAuth": {
+          "id": "y6gg1m2In5STsAnQ",
+          "name": "IncidentMind Hindsight API Key (Mahalaxmi)"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "toolDescription": "Reason and synthesize across multiple historical memories in Hindsight long-term memory. Use when the question requires synthesis across previous incidents (e.g. \"what lessons should we apply based on previous incidents?\"). Input: {\"query\": \"<reflective question>\", \"context\": \"<optional current context>\"}. Returns a synthesized response plus supporting facts.",
+        "method": "POST",
+        "url": "https://api.hindsight.vectorize.io/v1/default/banks/incidentmind/reflect",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpTemplatedCustomAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"query\": {{ $fromAI('query', 'The reflective question to reason over across memories') }},\n  \"context\": {{ $fromAI('context', 'Optional current context to inform the reflection') }}\n}",
+        "options": {}
+      },
+      "id": "838b3e2e-8ba4-4209-b3d6-4974b8b94bc0",
+      "name": "reflect_hindsight",
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.5,
+      "position": [
+        608,
+        336
+      ],
+      "credentials": {
+        "httpTemplatedCustomAuth": {
+          "id": "y6gg1m2In5STsAnQ",
+          "name": "IncidentMind Hindsight API Key (Mahalaxmi)"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "toolDescription": "Store useful long-term organizational knowledge in Hindsight memory: incident root causes, successful resolutions, failed troubleshooting attempts, deployment lessons, postmortem findings, repeated failure patterns, procedures. Only retain genuinely useful incident-response knowledge, never trivial chat. Input: {\"content\": \"<knowledge to retain>\", \"metadata\": {\"incident_id\": \"...\", \"service\": \"...\", \"environment\": \"...\", \"source\": \"...\", \"root_cause\": \"...\", \"resolution\": \"...\", \"outcome\": \"...\"}}.",
+        "method": "POST",
+        "url": "https://api.hindsight.vectorize.io/v1/default/banks/incidentmind/memories",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpTemplatedCustomAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"content\": {{ $fromAI('content', 'The knowledge to retain in long-term memory') }},\n  \"metadata\": {{ $fromAI('metadata', 'Provenance metadata object: incident_id, service, environment, source, root_cause, resolution, outcome') }}\n}",
+        "options": {}
+      },
+      "id": "a1cfbe87-17a0-4148-afcb-9f964d84cc7f",
+      "name": "retain_hindsight_memory",
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.5,
+      "position": [
+        736,
+        336
+      ],
+      "credentials": {
+        "httpTemplatedCustomAuth": {
+          "id": "y6gg1m2In5STsAnQ",
+          "name": "IncidentMind Hindsight API Key (Mahalaxmi)"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "toolDescription": "Call the IncidentMind FastAPI backend for CURRENT operational data: current incidents, incident details/history, logs, deployment history, service health, runbooks, postmortems. Supported actions: get_incident, search_incidents, get_incident_history, get_logs, get_deployment_history, get_service_health, get_runbook, get_postmortem. Use for questions about the CURRENT incident or live system state. Input: {\"action\": \"<action>\", \"params\": {\"incident_id\": \"...\", \"service\": \"...\", \"query\": \"...\"}}.",
+        "method": "POST",
+        "url": "<__PLACEHOLDER_VALUE__IncidentMind backend URL, e.g. https://your-host/api/agent/tool__>",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"action\": {{ $fromAI('action', 'One of: get_incident, search_incidents, get_incident_history, get_logs, get_deployment_history, get_service_health, get_runbook, get_postmortem') }},\n  \"params\": {{ $fromAI('params', 'Parameters for the action, e.g. {\"incident_id\": \"INC-021\"} or {\"service\": \"payment-api\"}') }}\n}",
+        "options": {}
+      },
+      "id": "6a6c330f-3b26-4b1a-bd4c-d7da00d88496",
+      "name": "incident_api",
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.5,
+      "position": [
+        864,
+        336
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "text",
+        "responseBody": "={{ JSON.stringify({\n  answer: '',\n  error: 'IncidentMind AI Agent failed to process the request.',\n  memory_used: false,\n  memories: [],\n  sources: [],\n  tools_used: [],\n  conversation_id: $('Webhook').first().json.body.conversation_id ?? ''\n}) }}",
+        "options": {
+          "responseCode": 500,
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          }
+        }
+      },
+      "id": "a04379e7-f652-44b8-8448-fe62c60dbe46",
+      "name": "Respond Error",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [
+        1072,
+        304
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "output",
+              "name": "output",
+              "type": "string",
+              "value": "={{ (() => {\n  const raw = $json.output ?? '';\n  const sessionId = $('Webhook').first().json.body.conversation_id ?? '';\n  let parsed = null;\n  try {\n    const m = String(raw).match(/\\{[\\s\\S]*\\}/);\n    if (m) parsed = JSON.parse(m[0]);\n  } catch (e) {}\n  const base = parsed && parsed.answer ? parsed : { answer: raw, memory_used: false, memories: [], sources: [], tools_used: [] };\n  base.conversation_id = sessionId;\n  return JSON.stringify(base);\n})() }}"
+            }
+          ],
+          "options": {}
+        },
+        "options": {}
+      },
+      "id": "30750bc2-c0e3-4e28-915e-d3c972a71111",
+      "name": "Format Chat Response",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        1072,
+        112
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "text",
+        "responseBody": "={{ $json.output }}",
+        "options": {
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          }
+        }
+      },
+      "id": "cc5a0608-10be-4b56-91bb-0c35a58cbc30",
+      "name": "Respond to Webhook",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [
+        1296,
+        16
+      ]
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "IncidentMind Agent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IncidentMind Agent": {
+      "main": [
+        [
+          {
+            "node": "Format Chat Response",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Groq Chat Model": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "IncidentMind Agent",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Conversation Memory": {
+      "ai_memory": [
+        [
+          {
+            "node": "IncidentMind Agent",
+            "type": "ai_memory",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "search_hindsight_memory": {
+      "ai_tool": [
+        [
+          {
+            "node": "IncidentMind Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "reflect_hindsight": {
+      "ai_tool": [
+        [
+          {
+            "node": "IncidentMind Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "retain_hindsight_memory": {
+      "ai_tool": [
+        [
+          {
+            "node": "IncidentMind Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "incident_api": {
+      "ai_tool": [
+        [
+          {
+            "node": "IncidentMind Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Chat Response": {
+      "main": [
+        [
+          {
+            "node": "Respond to Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": true
+  },
+  "versionId": "50cee3bc-e8f7-48b1-9ace-236686c9b3e1",
+  "meta": {
+    "instanceId": "f56974ee279ac9128900910c4f1515a06ad7f4114438deb73d6c8582cf7e3651"
+  },
+  "nodeGroups": [],
+  "id": "6l4aX4FM5stOKMrE",
+  "tags": []
+}
